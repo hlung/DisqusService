@@ -21,7 +21,7 @@ public enum HTTPMethod: String {
     case put = "PUT"
 }
 
-public class DisqusService: NSObject, SFSafariViewControllerDelegate {
+public class DisqusService: NSObject {
     
     public typealias disqusAuthCompletion = (Bool) -> Void
     public typealias disqusAPICompletion = ([AnyHashable : Any]?, Bool) -> Void
@@ -73,67 +73,6 @@ public class DisqusService: NSObject, SFSafariViewControllerDelegate {
                 UserDefaults.standard.set(data, forKey: "disqusLoggedUser")
             }
         }
-    }
-    
-    //MARK: - Auth
-    
-    public func authenticate(viewController: UIViewController, completionHandler: @escaping disqusAuthCompletion) {
-        
-        var urlString = "authorize/"
-        urlString += "?client_id=\(publicKey!)"
-        urlString += "&scope=read,write"
-        urlString += "&response_type=code"
-        urlString += "&redirect_uri=\(redirectURI!)"
-        
-        let url = URL(string: authURL + urlString)!
-        
-        if #available(iOS 9.0, *) {
-            let safariVC = SFSafariViewController(url: url)
-            safariVC.delegate = self
-            viewController.present(safariVC, animated: true, completion: nil)
-            NotificationCenter.default.addObserver(forName: .DisqusServiceSafariAuthDidClose,
-                                                   object: nil, queue: .main ) {[unowned self] (notif) in
-                                                    safariVC.dismiss(animated: true, completion: nil)
-                                                    let tmpCode = (notif.object as! URL).query!.replacingOccurrences(of: "code=", with: "")
-                                                    let url2 = URL(string: self.authURL + "access_token/")!
-                                                    let params = ["grant_type" : "authorization_code",
-                                                                  "client_id" : self.publicKey!,
-                                                                  "client_secret" : self.secretKey!,
-                                                                  "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
-                                                                  "code" : tmpCode]
-                                                    
-                                                    self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
-                                                        if let json = json {
-                                                            self.loggedUser = DisqusUser(json: json)
-                                                        }
-                                                        completionHandler(success)
-                                                    }
-            }
-        } else {
-            let nav = DisqusAuthViewController()
-            nav.url = url
-            nav.callback = { (tmpCode) in
-                let url2 = URL(string: self.authURL + "access_token/")!
-                let params = ["grant_type" : "authorization_code",
-                              "client_id" : self.publicKey!,
-                              "client_secret" : self.secretKey!,
-                              "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
-                              "code" : tmpCode]
-
-                self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
-                    if let json = json {
-                        self.loggedUser = DisqusUser(json: json)
-                    }
-                    completionHandler(success)
-                }
-            }
-            let navVC = UINavigationController(rootViewController: nav)
-            viewController.present(navVC, animated: true, completion: nil)
-        }
-    }
-    
-    public func logout() {
-        loggedUser = nil
     }
     
     //MARK: - Api call
@@ -207,12 +146,76 @@ public class DisqusService: NSObject, SFSafariViewControllerDelegate {
             completionHandler(data, error)
         }).resume()
     }
-    
-    //MARK: - SFSafariViewControllerDelegate
-    
-    @available(iOS 9.0, *)
-    public func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
-        
+
+}
+
+extension DisqusService: SFSafariViewControllerDelegate {
+
+    //MARK: - Auth
+
+    public func authenticate(viewController: UIViewController, completionHandler: @escaping disqusAuthCompletion) {
+
+        var urlString = "authorize/"
+        urlString += "?client_id=\(publicKey!)"
+        urlString += "&scope=read,write"
+        urlString += "&response_type=code"
+        urlString += "&redirect_uri=\(redirectURI!)"
+
+        let url = URL(string: authURL + urlString)!
+
+        if #available(iOS 9.0, *) {
+            let safariVC = SFSafariViewController(url: url)
+            safariVC.delegate = self
+            viewController.present(safariVC, animated: true, completion: nil)
+            NotificationCenter.default.addObserver(forName: .DisqusServiceSafariAuthDidClose,
+                                                   object: nil, queue: .main ) {[unowned self] (notif) in
+                                                    safariVC.dismiss(animated: true, completion: nil)
+                                                    let tmpCode = (notif.object as! URL).query!.replacingOccurrences(of: "code=", with: "")
+                                                    let url2 = URL(string: self.authURL + "access_token/")!
+                                                    let params = ["grant_type" : "authorization_code",
+                                                                  "client_id" : self.publicKey!,
+                                                                  "client_secret" : self.secretKey!,
+                                                                  "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
+                                                                  "code" : tmpCode]
+
+                                                    self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
+                                                        if let json = json {
+                                                            self.loggedUser = DisqusUser(json: json)
+                                                        }
+                                                        completionHandler(success)
+                                                    }
+            }
+        } else {
+            let nav = DisqusAuthViewController()
+            nav.url = url
+            nav.callback = { (tmpCode) in
+                let url2 = URL(string: self.authURL + "access_token/")!
+                let params = ["grant_type" : "authorization_code",
+                              "client_id" : self.publicKey!,
+                              "client_secret" : self.secretKey!,
+                              "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
+                              "code" : tmpCode]
+
+                self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
+                    if let json = json {
+                        self.loggedUser = DisqusUser(json: json)
+                    }
+                    completionHandler(success)
+                }
+            }
+            let navVC = UINavigationController(rootViewController: nav)
+            viewController.present(navVC, animated: true, completion: nil)
+        }
     }
 
+    public func logout() {
+        loggedUser = nil
+    }
+
+    //MARK: - SFSafariViewControllerDelegate
+
+    @available(iOS 9.0, *)
+    public func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
+
+    }
 }
