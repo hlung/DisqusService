@@ -13,10 +13,18 @@ public extension Notification.Name {
     static let DisqusServiceSafariAuthDidClose = Notification.Name("DisqusServiceSafariAuthDidClose")
 }
 
+public enum HTTPMethod: String {
+    case get = "GET"
+    case post = "POST"
+    case delete = "DELETE"
+    case patch = "PATCH"
+    case put = "PUT"
+}
+
 public class DisqusService: NSObject, SFSafariViewControllerDelegate {
     
     public typealias disqusAuthCompletion = (Bool) -> Void
-    public typealias disqusAPICompletion = ([AnyHashable : Any]?,Bool) -> Void
+    public typealias disqusAPICompletion = ([AnyHashable : Any]?, Bool) -> Void
     
     public static let shared = DisqusService()
     
@@ -94,11 +102,11 @@ public class DisqusService: NSObject, SFSafariViewControllerDelegate {
                                                                   "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
                                                                   "code" : tmpCode]
                                                     
-                                                    self.performPOSTConnection(url: url2, parameters: params) { [unowned self] (data, error) in
-                                                        if let json = data as? [AnyHashable : Any] {
+                                                    self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
+                                                        if let json = json {
                                                             self.loggedUser = DisqusUser(json: json)
                                                         }
-                                                        completionHandler(error == nil)
+                                                        completionHandler(success)
                                                     }
             }
         } else {
@@ -111,12 +119,12 @@ public class DisqusService: NSObject, SFSafariViewControllerDelegate {
                               "client_secret" : self.secretKey!,
                               "redirect_uri" : self.redirectURI!.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!,
                               "code" : tmpCode]
-                
-                self.performPOSTConnection(url: url2, parameters: params) { [unowned self] (data, error) in
-                    if let json = data as? [AnyHashable : Any] {
+
+                self.performDisqusDictionaryTask(url: url2, method: .post, params: params) { [unowned self] (json, success) in
+                    if let json = json {
                         self.loggedUser = DisqusUser(json: json)
                     }
-                    completionHandler(error == nil)
+                    completionHandler(success)
                 }
             }
             let navVC = UINavigationController(rootViewController: nav)
@@ -131,90 +139,72 @@ public class DisqusService: NSObject, SFSafariViewControllerDelegate {
     //MARK: - Api call
     
     public func performGETRequest(api: String, authRequired: Bool = false, params: [AnyHashable : Any], completionHandler: @escaping disqusAPICompletion) {
-        performRequest(api: api, authRequired: authRequired, params: params, method: "GET", completionHandler: completionHandler)
+        let url = URL(string: baseURL + api + ".json")!
+        performDisqusDictionaryTask(url: url, authRequired: authRequired, method: .get, params: params, completionHandler: completionHandler)
     }
     
     public func performPOSTRequest(api: String, authRequired: Bool = false, params: [AnyHashable : Any], completionHandler: @escaping disqusAPICompletion) {
-        performRequest(api: api, authRequired: authRequired, params: params, method: "POST", completionHandler: completionHandler)
-    }
-    
-    private func performRequest(api: String, authRequired: Bool, params: [AnyHashable : Any], method: String, completionHandler: @escaping disqusAPICompletion) {
         let url = URL(string: baseURL + api + ".json")!
-        
+        performDisqusDictionaryTask(url: url, authRequired: authRequired, method: .post, params: params,completionHandler: completionHandler)
+    }
+
+    private func performDisqusDictionaryTask(url: URL, authRequired: Bool = false, method: HTTPMethod, params: [AnyHashable : Any], completionHandler: @escaping disqusAPICompletion) {
+        performDisqusTask(url: url, authRequired: authRequired, method: method, params: params, completionHandler: { (data, error) in
+            var json: Any? = nil
+            if data != nil {
+                json = try? JSONSerialization.jsonObject(with: data!, options: [])
+            }
+            let errorCond = error == nil && ((json as? [AnyHashable : Any])?["code"] as? Int) == 0
+            completionHandler(json as? [AnyHashable : Any], errorCond)
+        })
+    }
+
+    public func performDisqusTask(url: URL, authRequired: Bool = false, method: HTTPMethod, params: [AnyHashable : Any], completionHandler: @escaping DataCompletion) {
         var params = params
         params["api_key"] = publicKey!
         params["api_secret"] = secretKey!
-        
+
         if let token = loggedUser?.accessToken {
             if authRequired {
                 params["access_token"] = token
             }
         }
-        
-        let block: conCompletion = { (data, error) in
-            let errorCond = error == nil && ((data as? [AnyHashable : Any])?["code"] as? Int) == 0
-            completionHandler(data as? [AnyHashable : Any], errorCond)
-        }
-        
-        if method == "GET" {
-            performGETConnection(url: url, parameters: params, completionHandler: block)
-        } else if method == "POST" {
-            performPOSTConnection(url: url, parameters: params, completionHandler: block)
-        }
-        
+        performDataTask(url: url, method: method, params: params, completionHandler: completionHandler)
     }
     
     //MARK: - General
-    
-    private typealias conCompletion = (Any?, Error?) -> Void
-    
-    private func performGETConnection(url: URL, parameters: [AnyHashable : Any]?, completionHandler: @escaping conCompletion) {
-        
-        var paramString = "?"
-        if let parameters = parameters {
-            
-            for (key,value) in parameters {
+
+    public typealias DataCompletion = (Data?, Error?) -> Void
+
+    /// Designated network request performer
+    func performDataTask(url: URL, method: HTTPMethod, params: [AnyHashable : Any], completionHandler: @escaping DataCompletion) {
+        var request: URLRequest
+
+        switch method {
+        case .post:
+            request = URLRequest(url: url)
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            var paramString = ""
+            for (key,value) in params {
                 paramString += "\(key)=\(value)&"
             }
             paramString.removeLast()
+            request.httpBody = paramString.data(using: String.Encoding.utf8)!
+        default:
+            var paramString = "?"
+            for (key,value) in params {
+                paramString += "\(key)=\(value)&"
+            }
+            paramString.removeLast()
+            let finalURL = URL(string: url.absoluteString + paramString)!
+            request = URLRequest(url: finalURL)
         }
-        let url = URL(string: url.absoluteString + paramString)!
-        
-        performConnection(url: url, method: "GET", parameters: nil, completionHandler: completionHandler)
-    }
-    
-    private func performPOSTConnection(url: URL, parameters: [AnyHashable : Any]?, completionHandler: @escaping conCompletion) {
-        performConnection(url: url, method: "POST", parameters: parameters, completionHandler: completionHandler)
-    }
-    
-    private func performConnection(url: URL, method: String, parameters: [AnyHashable : Any]?, completionHandler: @escaping conCompletion) {
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = method
+
+        request.httpMethod = method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if method == "POST" {
-            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-            
-            if let parameters = parameters {
-                
-                var paramString = ""
-                for (key,value) in parameters {
-                    paramString += "\(key)=\(value)&"
-                }
-                paramString.removeLast()
-                
-                request.httpBody = paramString.data(using: String.Encoding.utf8)!
-            }
-        }
-        
+
         URLSession.shared.dataTask(with: request, completionHandler: { (data, _, error) in
-            
-            var json: Any? = nil
-            if data != nil {
-                json = try? JSONSerialization.jsonObject(with: data!, options: [])
-            }
-            
-            completionHandler(json, error)
+            completionHandler(data, error)
         }).resume()
     }
     
